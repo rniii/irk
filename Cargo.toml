@@ -1,0 +1,11 @@
+[package]
+name = "irk"
+version = "0.1.0"
+authors = ["rini <rini@rinici.de>"]
+edition = "2021"
+description = "A lil (wip) IRC protocol library"
+repository = "https://codeberg.org/rini/irk"
+license = "Apache-2.0"
+
+[dependencies]
+serde = { version = "1.0.192", features = ["derive"] }
