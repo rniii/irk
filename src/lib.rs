@@ -1,5 +1,7 @@
 pub mod proto;
+pub mod error;
 
+pub use error::{Error, Result};
 pub use proto::{ser::Serializer, Command};
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -23,33 +25,6 @@ impl std::fmt::Display for Message<'_> {
         }
 
         Ok(())
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum Error {
-    Eof,
-    InvalidType,
-    Serialize(String),
-    Deserialize(String),
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::Eof => write!(f, "Unexpected end of input"),
-            Error::InvalidType => write!(f, "Unsupported type"),
-            Error::Serialize(e) => write!(f, "Serialize error: {e}"),
-            Error::Deserialize(e) => write!(f, "Deserialize error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl serde::ser::Error for Error {
-    fn custom<T: std::fmt::Display>(msg: T) -> Self {
-        Self::Serialize(msg.to_string())
     }
 }
 

@@ -1,6 +1,6 @@
 use serde::{ser, Serialize};
 
-use crate::{Error, Message};
+use crate::{Error, Message, Result};
 
 #[derive(Debug, Default)]
 pub struct Serializer {
@@ -11,18 +11,18 @@ pub struct Serializer {
 pub struct Sequence<'a>(&'a mut Serializer, Vec<Box<str>>);
 
 impl Serializer {
-    pub fn new<T: Serialize>(value: T) -> Result<Self, Error> {
+    pub fn new<T: Serialize>(value: T) -> Result<Self> {
         let mut ser = Self::default();
         value.serialize(&mut ser)?;
         Ok(ser)
     }
 
-    pub fn argument<T: Serialize>(mut self, value: T) -> Result<Self, Error> {
+    pub fn argument<T: Serialize>(mut self, value: T) -> Result<Self> {
         value.serialize(&mut self)?;
         Ok(self)
     }
 
-    pub fn to_message(&self) -> Result<Message, Error> {
+    pub fn to_message(&self) -> Result<Message> {
         let (command, param) = self.args.split_first().ok_or(Error::Eof)?;
         Ok(Message {
             source: None,
@@ -33,24 +33,40 @@ impl Serializer {
 }
 
 macro_rules! pushes {
-    ($($f:ident($($p:ident: $t:ty),*) { $v:expr })*) => {
-        $(fn $f(self, $($p: $t),*) -> Result<Self::Ok, Self::Error> {
-            self.args.push($v.into());
+    ($($fun:ident($($param:ident: $type:ty),*) { $val:expr })*) => {
+        $(fn $fun(self, $($param: $type),*) -> Result<()> {
+            self.args.push($val.into());
             Ok(())
         })*
     };
 }
 
 macro_rules! pushes_string {
-    ($($f:ident($t:ty))*) => {
-        pushes! { $($f(v: $t) { v.to_string() })* }
+    ($($fun:ident($type:ty))*) => {
+        pushes! { $($fun(v: $type) { v.to_string() })* }
     };
 }
 
 macro_rules! noop {
-    ($($f:ident($($t:ty),*))*) => {
-        $(fn $f(self, $(_: $t),*) -> Result<Self::Ok, Self::Error> {
+    ($($fun:ident($($type:ty),*))*) => {
+        $(fn $fun(self, $(_: $type),*) -> Result<()> {
             Ok(())
+        })*
+    };
+}
+
+macro_rules! serializes_self {
+    ($($fun:ident($($type:ty),*))*) => {
+        $(fn $fun(self, $(_: $type),*) -> Result<Self> {
+            Ok(self)
+        })*
+    };
+}
+
+macro_rules! forwards_self {
+    ($($fun:ident($($type:ty),*))*) => {
+        $(fn $fun<T: Serialize + ?Sized>(self, $(_: $type,)* value: &T) -> Result<()> {
+            value.serialize(self)
         })*
     };
 }
@@ -68,7 +84,6 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     type SerializeStructVariant = Self;
 
     pushes! {
-        serialize_bool(v: bool) { if v { "1" } else { "0" } }
         serialize_str(v: &str) { v }
         serialize_bytes(v: &[u8]) { std::str::from_utf8(v).unwrap() }
         serialize_unit_variant(_name: &'static str, _index: u32, variant: &'static str) {
@@ -79,29 +94,28 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     pushes_string! {
         serialize_i8(i8) serialize_i16(i16) serialize_i32(i32) serialize_i64(i64)
         serialize_u8(u8) serialize_u16(u16) serialize_u32(u32) serialize_u64(u64)
-        serialize_f32(f32) serialize_f64(f64) serialize_char(char)
+        serialize_f32(f32) serialize_f64(f64) serialize_char(char) serialize_bool(bool)
     }
 
     noop! {
         serialize_unit() serialize_none() serialize_unit_struct(&'static str)
     }
 
-    fn serialize_some<T>(self, value: &T) -> Result<Self::Ok, Self::Error>
-    where
-        T: Serialize + ?Sized,
-    {
-        value.serialize(self)
+    forwards_self! {
+        serialize_some() serialize_newtype_struct(&'static str)
     }
 
-    fn serialize_newtype_struct<T>(
-        self,
-        _name: &'static str,
-        value: &T,
-    ) -> Result<Self::Ok, Self::Error>
-    where
-        T: Serialize + ?Sized,
-    {
-        value.serialize(self)
+    serializes_self! {
+        serialize_tuple(usize) serialize_tuple_struct(&'static str, usize)
+        serialize_struct(&'static str, usize)
+    }
+
+    fn serialize_seq(self, _len: Option<usize>) -> Result<Sequence<'a>> {
+        Ok(Sequence(self, Vec::new()))
+    }
+
+    fn serialize_map(self, _len: Option<usize>) -> Result<ser::Impossible<(), Error>> {
+        Err(Error::UnsupportedType)
     }
 
     fn serialize_newtype_variant<T>(
@@ -110,28 +124,12 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         _variant_index: u32,
         variant: &'static str,
         value: &T,
-    ) -> Result<Self::Ok, Self::Error>
+    ) -> Result<()>
     where
         T: Serialize + ?Sized,
     {
         self.args.push(variant.into());
         value.serialize(self)
-    }
-
-    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        Ok(Sequence(self, Vec::new()))
-    }
-
-    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        Ok(self)
-    }
-
-    fn serialize_tuple_struct(
-        self,
-        _name: &'static str,
-        _len: usize,
-    ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        Ok(self)
     }
 
     fn serialize_tuple_variant(
@@ -140,20 +138,8 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         _variant_index: u32,
         variant: &'static str,
         _len: usize,
-    ) -> Result<Self::SerializeTupleVariant, Self::Error> {
+    ) -> Result<Self> {
         self.args.push(variant.into());
-        Ok(self)
-    }
-
-    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        Err(Error::InvalidType)
-    }
-
-    fn serialize_struct(
-        self,
-        _name: &'static str,
-        _len: usize,
-    ) -> Result<Self::SerializeStruct, Self::Error> {
         Ok(self)
     }
 
@@ -163,7 +149,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         _variant_index: u32,
         variant: &'static str,
         _len: usize,
-    ) -> Result<Self::SerializeStructVariant, Self::Error> {
+    ) -> Result<Self> {
         self.args.push(variant.into());
         Ok(self)
     }
@@ -173,10 +159,7 @@ impl<'a> ser::SerializeSeq for Sequence<'a> {
     type Ok = ();
     type Error = Error;
 
-    fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
-    where
-        T: Serialize + ?Sized,
-    {
+    fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
         let mut ser = Serializer::default();
         value.serialize(&mut ser)?;
         self.1.extend(ser.args);
@@ -184,7 +167,7 @@ impl<'a> ser::SerializeSeq for Sequence<'a> {
         Ok(())
     }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> {
+    fn end(self) -> Result<()> {
         self.0.args.push(self.1.join(",").into());
         Ok(())
     }
@@ -196,14 +179,14 @@ macro_rules! serialize_fields {
             type Ok = ();
             type Error = Error;
 
-            fn $fun<T>(&mut self, $(_: $type,)* value: &T) -> Result<(), Self::Error>
+            fn $fun<T>(&mut self, $(_: $type,)* value: &T) -> Result<()>
             where
                 T: Serialize + ?Sized,
             {
                 value.serialize(&mut **self)
             }
 
-            fn end(self) -> Result<Self::Ok, Self::Error> {
+            fn end(self) -> Result<()> {
                 Ok(())
             }
         })*
