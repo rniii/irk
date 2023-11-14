@@ -1,14 +1,14 @@
-pub mod proto;
 pub mod error;
+pub mod proto;
 
 pub use error::{Error, Result};
 pub use proto::{ser::Serializer, Command};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Message<'a> {
-    source: Option<&'a str>,
-    command: &'a str,
-    parameters: Vec<&'a str>,
+    pub source: Option<&'a str>,
+    pub command: &'a str,
+    pub parameters: Vec<&'a str>,
 }
 
 impl std::fmt::Display for Message<'_> {
@@ -50,7 +50,7 @@ impl<'a> Lexer<'a> {
         part
     }
 
-    fn parse(&mut self) -> Result<Message<'a>, Error> {
+    fn parse(&mut self) -> Message<'a> {
         let source = match self.current() {
             Some(':') => {
                 self.input = &self.input[1..];
@@ -70,18 +70,16 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        Ok(Message {
+        Message {
             source,
             command,
             parameters,
-        })
+        }
     }
 }
 
-impl<'a> TryFrom<&'a str> for Message<'a> {
-    type Error = Error;
-
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+impl<'a> From<&'a str> for Message<'a> {
+    fn from(value: &'a str) -> Self {
         Lexer::new(value).parse()
     }
 }

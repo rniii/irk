@@ -3,19 +3,26 @@ use serde::de::{self, Visitor};
 use crate::{Error, Result};
 
 pub struct Deserializer<'de> {
-    input: (Option<&'de str>, &'de [&'de str]),
+    input: (Option<&'de str>, Vec<&'de str>),
     fields: usize,
+}
+
+impl<'de> Deserializer<'de> {
+    pub fn from_message(mut msg: crate::Message<'de>) -> Self {
+        msg.parameters.reverse();
+        Self {
+            input: (Some(msg.command), msg.parameters),
+            fields: 0,
+        }
+    }
 }
 
 impl<'de> Deserializer<'de> {
     fn read_part(&mut self) -> Result<&'de str> {
         if let Some(p) = self.input.0.take() {
             Ok(p)
-        } else if let Some((p, rest)) = self.input.1.split_first() {
-            self.input.1 = rest;
-            Ok(p)
         } else {
-            Err(Error::Eof)
+            self.input.1.pop().ok_or(Error::Eof)
         }
     }
 
@@ -194,19 +201,11 @@ impl<'de, 'a> de::SeqAccess<'de> for Sequence<'de, 'a> {
             return Ok(None);
         }
 
-        match part.split_once(',') {
-            Some((p, rest)) => {
-                self.0.input.0 = Some(p);
-                let v = seed.deserialize(&mut *self.0).map(Some);
-                self.0.input.0 = Some(rest);
-                v
-            }
-            None => {
-                self.0.input.0 = Some(part);
-                let v = seed.deserialize(&mut *self.0).map(Some);
-                self.0.input.0 = Some("");
-                v
-            }
-        }
+        let (p, rest) = part.split_once(',').unwrap_or((part, ""));
+
+        self.0.input.0 = Some(p);
+        let v = seed.deserialize(&mut *self.0).map(Some);
+        self.0.input.0 = Some(rest);
+        v
     }
 }

@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 pub mod de;
 pub mod ser;
 
+pub use de::Deserializer;
+pub use ser::Serializer;
+
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Command<'a> {
